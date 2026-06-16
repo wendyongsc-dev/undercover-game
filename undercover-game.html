@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Undercover — Word Deduction Game</title>
+<script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0F0E17;
+    --surface: #1A1826;
+    --surface2: #241F36;
+    --border: rgba(255,255,255,0.08);
+    --accent: #7C5CFC;
+    --accent-dim: rgba(124,92,252,0.15);
+    --accent-glow: rgba(124,92,252,0.35);
+    --danger: #FC5C7D;
+    --danger-dim: rgba(252,92,125,0.12);
+    --success: #43E97B;
+    --success-dim: rgba(67,233,123,0.12);
+    --amber: #F9A825;
+    --amber-dim: rgba(249,168,37,0.12);
+    --text: #EEE9FF;
+    --text-muted: rgba(238,233,255,0.5);
+    --text-faint: rgba(238,233,255,0.25);
+    --radius: 12px;
+    --radius-sm: 8px;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px;
+  }
+
+  .screen { display: none; width: 100%; max-width: 480px; }
+  .screen.active { display: flex; flex-direction: column; gap: 16px; }
+
+  /* Header */
+  .header { text-align: center; padding: 24px 0 8px; }
+  .logo { font-size: 13px; font-weight: 700; letter-spacing: 0.18em; color: var(--accent); text-transform: uppercase; margin-bottom: 6px; }
+  h1 { font-size: 28px; font-weight: 700; line-height: 1.2; }
+  .subtitle { font-size: 14px; color: var(--text-muted); margin-top: 6px; }
+
+  /* Cards */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+  }
+  .card-label {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--text-faint); margin-bottom: 12px;
+  }
+
+  /* Inputs */
+  input[type="text"], input[type="number"] {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font-size: 16px;
+    padding: 12px 14px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  input:focus { border-color: var(--accent); }
+  input::placeholder { color: var(--text-faint); }
+
+  /* Buttons */
+  .btn {
+    width: 100%;
+    padding: 14px;
+    border-radius: var(--radius-sm);
+    border: none;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.1s;
+  }
+  .btn:active { transform: scale(0.98); }
+  .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-danger { background: var(--danger); color: #fff; }
+  .btn-ghost { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
+  .btn-sm { padding: 8px 14px; font-size: 13px; width: auto; }
+
+  /* Badge */
+  .badge {
+    display: inline-block;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+    padding: 3px 8px; border-radius: 20px;
+    text-transform: uppercase;
+  }
+  .badge-accent { background: var(--accent-dim); color: var(--accent); }
+  .badge-danger { background: var(--danger-dim); color: var(--danger); }
+  .badge-success { background: var(--success-dim); color: var(--success); }
+  .badge-amber { background: var(--amber-dim); color: var(--amber); }
+
+  /* Room code display */
+  .room-code {
+    font-size: 42px; font-weight: 800; letter-spacing: 0.15em;
+    color: var(--accent); text-align: center; padding: 12px 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Player list */
+  .player-list { display: flex; flex-direction: column; gap: 8px; }
+  .player-row {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--surface2); border-radius: var(--radius-sm);
+    padding: 10px 14px;
+  }
+  .avatar {
+    width: 32px; height: 32px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; flex-shrink: 0;
+  }
+  .player-name { font-size: 14px; font-weight: 500; flex: 1; }
+  .player-status { font-size: 12px; color: var(--text-muted); }
+
+  /* Word reveal */
+  .word-reveal {
+    text-align: center; padding: 32px 20px;
+  }
+  .word-type { font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; }
+  .big-word {
+    font-size: 48px; font-weight: 800; line-height: 1.1;
+    background: linear-gradient(135deg, var(--accent), #B48EFF);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .word-undercover .big-word {
+    background: linear-gradient(135deg, var(--danger), #FF9AB2);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Voting */
+  .vote-grid { display: flex; flex-direction: column; gap: 8px; }
+  .vote-btn {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 12px 14px;
+    cursor: pointer; transition: border-color 0.15s, background 0.15s;
+    color: var(--text); font-size: 14px; font-weight: 500; text-align: left;
+  }
+  .vote-btn:hover { border-color: var(--accent); background: var(--accent-dim); }
+  .vote-btn.selected { border-color: var(--accent); background: var(--accent-dim); }
+  .vote-btn.voted-for { border-color: var(--danger); background: var(--danger-dim); }
+  .vote-btn:disabled { cursor: not-allowed; opacity: 0.5; }
+  .vote-count {
+    margin-left: auto; font-size: 13px; color: var(--text-muted);
+    display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; max-width: 160px;
+  }
+  .vote-chip {
+    font-size: 11px; background: var(--accent-dim); color: var(--accent);
+    border-radius: 20px; padding: 2px 7px;
+  }
+  .vote-chip.self { background: var(--danger-dim); color: var(--danger); }
+
+  /* Results */
+  .result-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 0; border-bottom: 1px solid var(--border);
+  }
+  .result-row:last-child { border: none; }
+  .vote-bar-wrap { flex: 1; background: var(--surface2); border-radius: 4px; height: 6px; }
+  .vote-bar { height: 6px; border-radius: 4px; background: var(--accent); transition: width 0.6s ease; }
+
+  /* Toast */
+  #toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px);
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text); font-size: 14px; padding: 10px 18px;
+    border-radius: 20px; transition: transform 0.3s ease; z-index: 99;
+    white-space: nowrap; pointer-events: none;
+  }
+  #toast.show { transform: translateX(-50%) translateY(0); }
+
+  /* Timer */
+  .timer-ring {
+    width: 80px; height: 80px; margin: 0 auto;
+    position: relative; display: flex; align-items: center; justify-content: center;
+  }
+  .timer-ring svg { position: absolute; top: 0; left: 0; transform: rotate(-90deg); }
+  .timer-ring circle { fill: none; stroke-width: 4; }
+  .timer-ring .track { stroke: var(--surface2); }
+  .timer-ring .progress { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
+  .timer-num { font-size: 26px; font-weight: 800; }
+
+  /* Phase banner */
+  .phase-banner {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; border-radius: var(--radius-sm);
+    font-size: 13px; font-weight: 600;
+  }
+  .phase-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .phase-discuss { background: var(--amber-dim); color: var(--amber); }
+  .phase-discuss .phase-dot { background: var(--amber); }
+  .phase-vote { background: var(--accent-dim); color: var(--accent); }
+  .phase-vote .phase-dot { background: var(--accent); }
+
+  /* Word pair config */
+  .pair-row { display: flex; gap: 8px; align-items: center; }
+  .pair-row input { flex: 1; }
+  .pair-remove { background: transparent; border: 1px solid var(--border); color: var(--text-muted); border-radius: var(--radius-sm); padding: 8px 10px; cursor: pointer; font-size: 16px; }
+  .pair-remove:hover { color: var(--danger); border-color: var(--danger); }
+
+  .divider { height: 1px; background: var(--border); margin: 4px 0; }
+  .flex-row { display: flex; gap: 8px; }
+  .flex-row .btn { flex: 1; }
+  .text-center { text-align: center; }
+  .text-muted { color: var(--text-muted); font-size: 13px; }
+  .pulse { animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+  .eliminated { opacity: 0.4; text-decoration: line-through; }
+</style>
+</head>
+<body>
+
+<!-- SCREEN: Landing -->
+<div id="screen-landing" class="screen active">
+  <div class="header">
+    <div class="logo">Word Deduction</div>
+    <h1>Undercover</h1>
+    <p class="subtitle">Find the imposters — before they find you</p>
+  </div>
+  <div class="card">
+    <div class="card-label">Your name</div>
+    <input type="text" id="input-name" placeholder="Enter your name" maxlength="20" />
+  </div>
+  <div class="card">
+    <div class="card-label">Room</div>
+    <div class="flex-row">
+      <button class="btn btn-primary" onclick="showCreate()">Create room</button>
+      <button class="btn btn-secondary" onclick="showJoin()">Join room</button>
+    </div>
+  </div>
+  <div id="create-panel" style="display:none;" class="card">
+    <div class="card-label">Number of undercovers</div>
+    <input type="number" id="input-undercovers" value="2" min="1" max="4" style="margin-bottom:12px;" />
+    <div class="card-label" style="margin-top:4px;">Word pairs (civilians get word A, undercovers get word B)</div>
+    <div id="pairs-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;"></div>
+    <button class="btn btn-ghost btn-sm" style="width:100%;margin-bottom:12px;" onclick="addPair()">+ Add word pair</button>
+    <div class="divider"></div>
+    <br>
+    <button class="btn btn-primary" onclick="createRoom()">Create & get room code</button>
+  </div>
+  <div id="join-panel" style="display:none;" class="card">
+    <div class="card-label">Room code</div>
+    <input type="text" id="input-roomcode" placeholder="e.g. 4829" maxlength="6" style="margin-bottom:12px;letter-spacing:0.15em;font-size:20px;text-align:center;" />
+    <button class="btn btn-primary" onclick="joinRoom()">Join game</button>
+  </div>
+</div>
+
+<!-- SCREEN: Lobby (host) -->
+<div id="screen-lobby-host" class="screen">
+  <div class="header">
+    <div class="logo">Waiting for players</div>
+    <div class="room-code" id="display-roomcode">----</div>
+    <p class="subtitle">Share this code with all 16 players</p>
+  </div>
+  <div class="card">
+    <div class="card-label">Players joined (<span id="player-count">0</span>)</div>
+    <div class="player-list" id="lobby-player-list"></div>
+  </div>
+  <button class="btn btn-primary" id="start-btn" onclick="hostStartGame()" disabled>Start game</button>
+  <p class="text-center text-muted">Need at least 3 players to start</p>
+</div>
+
+<!-- SCREEN: Lobby (guest) -->
+<div id="screen-lobby-guest" class="screen">
+  <div class="header">
+    <div class="logo">Room <span id="guest-roomcode"></span></div>
+    <h1>Waiting...</h1>
+    <p class="subtitle">Host will start the game soon</p>
+  </div>
+  <div class="card">
+    <div class="card-label">Players in room (<span id="guest-player-count">0</span>)</div>
+    <div class="player-list" id="guest-player-list"></div>
+  </div>
+  <div class="phase-banner phase-discuss" style="margin-top:8px;">
+    <div class="phase-dot"></div>
+    <span class="pulse">Waiting for host to start...</span>
+  </div>
+</div>
+
+<!-- SCREEN: Word reveal -->
+<div id="screen-word" class="screen">
+  <div class="header">
+    <div class="logo">Your word</div>
+    <p class="subtitle">Remember it — don't show anyone</p>
+  </div>
+  <div class="card">
+    <div class="word-reveal" id="word-reveal-content">
+      <div class="word-type" id="word-role-label">Civilian</div>
+      <div class="big-word" id="display-word">—</div>
+    </div>
+    <p class="text-muted text-center" style="margin-top:8px;">Undercovers have a similar but different word</p>
+  </div>
+  <button class="btn btn-primary" onclick="goToDiscussion()">I've memorised my word</button>
+</div>
+
+<!-- SCREEN: Discussion -->
+<div id="screen-discuss" class="screen">
+  <div class="header">
+    <div class="logo">Discussion phase</div>
+    <h1>Describe your word</h1>
+  </div>
+  <div class="phase-banner phase-discuss">
+    <div class="phase-dot"></div>
+    <span>Everyone takes turns giving one clue. Don't say the word!</span>
+  </div>
+  <div class="card">
+    <div class="card-label">Players</div>
+    <div class="player-list" id="discuss-player-list"></div>
+  </div>
+  <div class="card" id="host-controls-discuss" style="display:none;">
+    <div class="card-label">Host controls</div>
+    <button class="btn btn-primary" onclick="hostStartVoting()">Everyone has spoken — start voting</button>
+  </div>
+</div>
+
+<!-- SCREEN: Voting -->
+<div id="screen-vote" class="screen">
+  <div class="header">
+    <div class="logo">Voting phase</div>
+    <h1>Who is undercover?</h1>
+  </div>
+  <div class="phase-banner phase-vote">
+    <div class="phase-dot"></div>
+    <span>Tap a player to vote. You can change your vote before results.</span>
+  </div>
+  <div class="card">
+    <div class="card-label">Cast your vote</div>
+    <div class="vote-grid" id="vote-grid"></div>
+  </div>
+  <div class="card" id="host-controls-vote" style="display:none;">
+    <div class="card-label">Host controls</div>
+    <p class="text-muted" style="margin-bottom:12px;"><span id="votes-cast">0</span> / <span id="votes-total">0</span> votes cast</p>
+    <button class="btn btn-primary" onclick="hostRevealResults()">Reveal results</button>
+  </div>
+</div>
+
+<!-- SCREEN: Results -->
+<div id="screen-results" class="screen">
+  <div class="header">
+    <div class="logo">Results</div>
+    <h1 id="results-title">Vote results</h1>
+  </div>
+  <div class="card">
+    <div class="card-label">Vote tally</div>
+    <div id="results-list"></div>
+  </div>
+  <div class="card" id="eliminated-card" style="display:none;">
+    <div class="card-label">Eliminated</div>
+    <div style="display:flex;align-items:center;gap:12px;padding:8px 0;">
+      <div class="avatar" id="eliminated-avatar" style="background:var(--danger-dim);color:var(--danger);width:44px;height:44px;font-size:16px;"></div>
+      <div>
+        <div style="font-size:18px;font-weight:700;" id="eliminated-name"></div>
+        <div style="margin-top:4px;" id="eliminated-role"></div>
+      </div>
+    </div>
+  </div>
+  <div class="card" id="host-controls-results" style="display:none;">
+    <div class="card-label">Host controls</div>
+    <div class="flex-row">
+      <button class="btn btn-secondary" onclick="hostNextRound()">Next round</button>
+      <button class="btn btn-danger" onclick="hostEndGame()">End game</button>
+    </div>
+  </div>
+</div>
+
+<!-- SCREEN: Game over -->
+<div id="screen-gameover" class="screen">
+  <div class="header">
+    <div class="logo">Game over</div>
+    <h1 id="gameover-title">Civilians win!</h1>
+    <p class="subtitle" id="gameover-subtitle"></p>
+  </div>
+  <div class="card">
+    <div class="card-label">The undercovers were</div>
+    <div class="player-list" id="undercover-reveal-list"></div>
+  </div>
+  <div class="card">
+    <div class="card-label">The words</div>
+    <div style="display:flex;gap:16px;padding:8px 0;">
+      <div style="flex:1;text-align:center;">
+        <div class="text-muted" style="margin-bottom:6px;">Civilian word</div>
+        <div style="font-size:22px;font-weight:700;color:var(--accent);" id="reveal-civil-word"></div>
+      </div>
+      <div style="width:1px;background:var(--border);"></div>
+      <div style="flex:1;text-align:center;">
+        <div class="text-muted" style="margin-bottom:6px;">Undercover word</div>
+        <div style="font-size:22px;font-weight:700;color:var(--danger);" id="reveal-under-word"></div>
+      </div>
+    </div>
+  </div>
+  <button class="btn btn-primary" id="play-again-btn" style="display:none;" onclick="hostPlayAgain()">Play again</button>
+  <button class="btn btn-ghost" onclick="location.reload()">Back to home</button>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const ABLY_KEY = '7UbEZg.CfHhFg:7LCluL7tU9wMTmZvAXQQM_N5QiN7L-96jVaXIYMAc50';
+
+const COLORS = ['#7C5CFC','#FC5C7D','#43E97B','#F9A825','#38BDF8','#F97316','#A78BFA','#34D399','#FB923C','#60A5FA','#E879F9','#4ADE80','#FACC15','#F472B6','#22D3EE','#C084FC'];
+
+const DEFAULT_PAIRS = [
+  ['Coffee', 'Tea'],
+  ['Cat', 'Tiger'],
+  ['Beach', 'Desert'],
+  ['Guitar', 'Violin'],
+  ['Pizza', 'Burger'],
+];
+
+let ably, channel;
+let myName = '';
+let myId = '';
+let roomCode = '';
+let isHost = false;
+let myWord = '';
+let myRole = '';
+let gameState = {
+  players: {},
+  phase: 'lobby',
+  wordPair: null,
+  votes: {},
+  eliminated: [],
+  undercoverIds: [],
+  numUndercovers: 2,
+  wordPairs: [...DEFAULT_PAIRS],
+  currentPairIndex: 0,
+  round: 1,
+};
+
+function uid() { return Math.random().toString(36).slice(2,9); }
+function genCode() { return Math.floor(1000 + Math.random() * 9000).toString(); }
+function initials(name) { return name.slice(0,2).toUpperCase(); }
+function colorFor(id) { const keys = Object.keys(gameState.players); const idx = keys.indexOf(id); return COLORS[idx % COLORS.length]; }
+
+function showToast(msg, dur=2500) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), dur);
+}
+
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+// --- Pairs UI ---
+function renderPairsUI() {
+  const list = document.getElementById('pairs-list');
+  list.innerHTML = '';
+  gameState.wordPairs.forEach((pair, i) => {
+    const row = document.createElement('div');
+    row.className = 'pair-row';
+    row.innerHTML = `
+      <input type="text" placeholder="Civilian word" value="${pair[0]}" oninput="gameState.wordPairs[${i}][0]=this.value" />
+      <input type="text" placeholder="Undercover word" value="${pair[1]}" oninput="gameState.wordPairs[${i}][1]=this.value" />
+      <button class="pair-remove" onclick="removePair(${i})">×</button>`;
+    list.appendChild(row);
+  });
+}
+function addPair() { gameState.wordPairs.push(['','']); renderPairsUI(); }
+function removePair(i) { if(gameState.wordPairs.length > 1){ gameState.wordPairs.splice(i,1); renderPairsUI(); } }
+
+function showCreate() {
+  document.getElementById('create-panel').style.display = 'block';
+  document.getElementById('join-panel').style.display = 'none';
+  renderPairsUI();
+}
+function showJoin() {
+  document.getElementById('join-panel').style.display = 'block';
+  document.getElementById('create-panel').style.display = 'none';
+}
+
+// --- Ably setup ---
+async function connectAbly(code) {
+  ably = new Ably.Realtime({ key: ABLY_KEY });
+  await new Promise(res => ably.connection.once('connected', res));
+  channel = ably.channels.get('undercover-' + code);
+  channel.subscribe(handleMessage);
+}
+
+function publish(type, data) {
+  channel.publish({ name: type, data: { ...data, senderId: myId, senderName: myName } });
+}
+
+// --- Create / Join ---
+async function createRoom() {
+  myName = document.getElementById('input-name').value.trim();
+  if (!myName) { showToast('Enter your name first'); return; }
+  const pairs = gameState.wordPairs.filter(p => p[0].trim() && p[1].trim());
+  if (!pairs.length) { showToast('Add at least one word pair'); return; }
+  gameState.wordPairs = pairs;
+  gameState.numUndercovers = parseInt(document.getElementById('input-undercovers').value) || 2;
+  myId = uid();
+  isHost = true;
+  roomCode = genCode();
+  await connectAbly(roomCode);
+  gameState.players[myId] = { id: myId, name: myName, color: COLORS[0], alive: true };
+  document.getElementById('display-roomcode').textContent = roomCode;
+  renderLobbyHost();
+  showScreen('screen-lobby-host');
+  publishState();
+}
+
+async function joinRoom() {
+  myName = document.getElementById('input-name').value.trim();
+  if (!myName) { showToast('Enter your name first'); return; }
+  const code = document.getElementById('input-roomcode').value.trim();
+  if (!code) { showToast('Enter a room code'); return; }
+  myId = uid();
+  isHost = false;
+  roomCode = code;
+  await connectAbly(code);
+  document.getElementById('guest-roomcode').textContent = code;
+  showScreen('screen-lobby-guest');
+  publish('join', { playerId: myId, playerName: myName });
+}
+
+// --- State sync ---
+function publishState() {
+  if (!isHost) return;
+  channel.publish({ name: 'state', data: { state: gameState } });
+}
+
+function handleMessage(msg) {
+  const { name, data } = msg;
+  if (name === 'join' && isHost) {
+    const idx = Object.keys(gameState.players).length;
+    gameState.players[data.playerId] = { id: data.playerId, name: data.playerName, color: COLORS[idx % COLORS.length], alive: true };
+    publishState();
+    renderLobbyHost();
+  }
+  if (name === 'state') {
+    const prev = gameState.phase;
+    gameState = data.state;
+    syncToPhase(prev);
+  }
+  if (name === 'vote' && isHost) {
+    gameState.votes[data.voterId] = data.targetId;
+    publishState();
+    updateVoteCount();
+  }
+  if (name === 'vote') {
+    // update local vote display
+    renderVoteGrid();
+  }
+}
+
+function syncToPhase(prevPhase) {
+  const phase = gameState.phase;
+  const players = Object.values(gameState.players);
+
+  if (phase === 'lobby') {
+    renderLobbyGuest();
+  }
+  if (phase === 'word' && prevPhase !== 'word') {
+    assignMyWord();
+    showScreen('screen-word');
+  }
+  if (phase === 'discuss') {
+    renderDiscussion();
+    showScreen('screen-discuss');
+  }
+  if (phase === 'vote') {
+    renderVoteGrid();
+    showScreen('screen-vote');
+    if (isHost) updateVoteCount();
+  }
+  if (phase === 'results') {
+    renderResults();
+    showScreen('screen-results');
+  }
+  if (phase === 'gameover') {
+    renderGameOver();
+    showScreen('screen-gameover');
+  }
+}
+
+// --- Word assignment ---
+function assignMyWord() {
+  const pair = gameState.wordPairs[gameState.currentPairIndex];
+  const isUndercover = gameState.undercoverIds.includes(myId);
+  myRole = isUndercover ? 'undercover' : 'civilian';
+  myWord = isUndercover ? pair[1] : pair[0];
+  document.getElementById('display-word').textContent = myWord;
+  document.getElementById('word-role-label').textContent = isUndercover ? 'Undercover' : 'Civilian';
+  const rev = document.getElementById('word-reveal-content');
+  if (isUndercover) {
+    rev.classList.add('word-undercover');
+  } else {
+    rev.classList.remove('word-undercover');
+  }
+}
+
+function goToDiscussion() {
+  renderDiscussion();
+  showScreen('screen-discuss');
+}
+
+// --- Host actions ---
+function hostStartGame() {
+  const players = Object.keys(gameState.players);
+  if (players.length < 3) { showToast('Need at least 3 players'); return; }
+  // assign undercovers randomly
+  const shuffled = [...players].sort(() => Math.random() - 0.5);
+  gameState.undercoverIds = shuffled.slice(0, gameState.numUndercovers);
+  gameState.currentPairIndex = Math.floor(Math.random() * gameState.wordPairs.length);
+  gameState.votes = {};
+  gameState.phase = 'word';
+  publishState();
+  assignMyWord();
+  showScreen('screen-word');
+}
+
+function hostStartVoting() {
+  gameState.votes = {};
+  gameState.phase = 'vote';
+  publishState();
+  renderVoteGrid();
+  showScreen('screen-vote');
+  updateVoteCount();
+}
+
+function hostRevealResults() {
+  gameState.phase = 'results';
+  publishState();
+  renderResults();
+  showScreen('screen-results');
+}
+
+function hostNextRound() {
+  gameState.round++;
+  gameState.votes = {};
+  // reassign undercovers from alive players
+  const alive = Object.keys(gameState.players).filter(id => gameState.players[id].alive);
+  const shuffled = [...alive].sort(() => Math.random() - 0.5);
+  gameState.undercoverIds = shuffled.slice(0, Math.min(gameState.numUndercovers, alive.length - 2));
+  gameState.currentPairIndex = Math.floor(Math.random() * gameState.wordPairs.length);
+  gameState.phase = 'word';
+  publishState();
+  assignMyWord();
+  showScreen('screen-word');
+}
+
+function hostEndGame() {
+  gameState.phase = 'gameover';
+  publishState();
+  renderGameOver();
+  showScreen('screen-gameover');
+}
+
+function hostPlayAgain() {
+  // reset all
+  Object.keys(gameState.players).forEach(id => { gameState.players[id].alive = true; });
+  gameState.eliminated = [];
+  gameState.votes = {};
+  gameState.round = 1;
+  gameState.phase = 'lobby';
+  publishState();
+  renderLobbyHost();
+  showScreen('screen-lobby-host');
+}
+
+// --- Render helpers ---
+function renderLobbyHost() {
+  const players = Object.values(gameState.players);
+  document.getElementById('player-count').textContent = players.length;
+  const list = document.getElementById('lobby-player-list');
+  list.innerHTML = players.map(p => `
+    <div class="player-row">
+      <div class="avatar" style="background:${p.color}22;color:${p.color};">${initials(p.name)}</div>
+      <span class="player-name">${p.name}</span>
+      <span class="player-status">${p.id === myId ? '(you)' : '✓ joined'}</span>
+    </div>`).join('');
+  document.getElementById('start-btn').disabled = players.length < 3;
+}
+
+function renderLobbyGuest() {
+  const players = Object.values(gameState.players);
+  document.getElementById('guest-player-count').textContent = players.length;
+  const list = document.getElementById('guest-player-list');
+  list.innerHTML = players.map(p => `
+    <div class="player-row">
+      <div class="avatar" style="background:${p.color}22;color:${p.color};">${initials(p.name)}</div>
+      <span class="player-name">${p.name}</span>
+      <span class="player-status">${p.id === myId ? '(you)' : ''}</span>
+    </div>`).join('');
+}
+
+function renderDiscussion() {
+  const players = Object.values(gameState.players).filter(p => p.alive);
+  const list = document.getElementById('discuss-player-list');
+  list.innerHTML = players.map(p => `
+    <div class="player-row">
+      <div class="avatar" style="background:${p.color}22;color:${p.color};">${initials(p.name)}</div>
+      <span class="player-name">${p.name}</span>
+      ${p.id === myId ? '<span class="badge badge-accent">you</span>' : ''}
+    </div>`).join('');
+  document.getElementById('host-controls-discuss').style.display = isHost ? 'block' : 'none';
+}
+
+function renderVoteGrid() {
+  const players = Object.values(gameState.players).filter(p => p.alive && p.id !== myId);
+  const grid = document.getElementById('vote-grid');
+  const myVote = gameState.votes[myId];
+  grid.innerHTML = players.map(p => {
+    const votesFor = Object.entries(gameState.votes).filter(([k,v]) => v === p.id);
+    const chips = votesFor.map(([voterId]) => {
+      const voter = gameState.players[voterId];
+      const isSelf = voterId === myId;
+      return `<span class="vote-chip${isSelf?' self':''}">${voter ? voter.name : '?'}</span>`;
+    }).join('');
+    const selected = myVote === p.id ? 'voted-for' : '';
+    return `
+      <button class="vote-btn ${selected}" onclick="castVote('${p.id}')" ${myVote ? 'disabled' : ''}>
+        <div class="avatar" style="background:${p.color}22;color:${p.color};width:32px;height:32px;font-size:12px;">${initials(p.name)}</div>
+        <span>${p.name}</span>
+        <div class="vote-count">${chips}</div>
+      </button>`;
+  }).join('');
+  document.getElementById('host-controls-vote').style.display = isHost ? 'block' : 'none';
+  if (isHost) updateVoteCount();
+}
+
+function castVote(targetId) {
+  if (gameState.votes[myId]) return;
+  gameState.votes[myId] = targetId;
+  publish('vote', { voterId: myId, targetId });
+  renderVoteGrid();
+  showToast('Vote cast!');
+}
+
+function updateVoteCount() {
+  const alive = Object.values(gameState.players).filter(p => p.alive).length;
+  const cast = Object.keys(gameState.votes).length;
+  document.getElementById('votes-cast').textContent = cast;
+  document.getElementById('votes-total').textContent = alive;
+}
+
+function renderResults() {
+  const tally = {};
+  Object.values(gameState.votes).forEach(targetId => {
+    tally[targetId] = (tally[targetId] || 0) + 1;
+  });
+  const sorted = Object.entries(tally).sort((a,b) => b[1]-a[1]);
+  const total = Object.values(tally).reduce((a,b)=>a+b,0) || 1;
+  const eliminatedId = sorted[0]?.[0];
+  const eliminated = gameState.players[eliminatedId];
+
+  if (isHost && eliminated) {
+    gameState.players[eliminatedId].alive = false;
+    gameState.eliminated.push(eliminatedId);
+  }
+
+  const list = document.getElementById('results-list');
+  list.innerHTML = sorted.map(([id, count]) => {
+    const p = gameState.players[id];
+    if (!p) return '';
+    const pct = Math.round((count / total) * 100);
+    return `
+      <div class="result-row">
+        <div class="avatar" style="background:${p.color}22;color:${p.color};width:32px;height:32px;font-size:12px;">${initials(p.name)}</div>
+        <span style="width:90px;font-size:14px;">${p.name}</span>
+        <div class="vote-bar-wrap"><div class="vote-bar" style="width:${pct}%;"></div></div>
+        <span style="font-size:14px;font-weight:600;min-width:24px;text-align:right;">${count}</span>
+      </div>`;
+  }).join('');
+
+  // Show eliminated card
+  const card = document.getElementById('eliminated-card');
+  if (eliminated) {
+    card.style.display = 'block';
+    document.getElementById('eliminated-avatar').textContent = initials(eliminated.name);
+    document.getElementById('eliminated-avatar').style.background = eliminated.color + '22';
+    document.getElementById('eliminated-avatar').style.color = eliminated.color;
+    document.getElementById('eliminated-name').textContent = eliminated.name;
+    const wasUndercover = gameState.undercoverIds.includes(eliminatedId);
+    document.getElementById('eliminated-role').innerHTML = wasUndercover
+      ? `<span class="badge badge-danger">Undercover</span> — word was <strong>${gameState.wordPairs[gameState.currentPairIndex][1]}</strong>`
+      : `<span class="badge badge-success">Civilian</span> — word was <strong>${gameState.wordPairs[gameState.currentPairIndex][0]}</strong>`;
+  } else {
+    card.style.display = 'none';
+  }
+  document.getElementById('host-controls-results').style.display = isHost ? 'block' : 'none';
+  document.getElementById('results-title').textContent = `Round ${gameState.round} results`;
+}
+
+function renderGameOver() {
+  const undercoverNames = gameState.undercoverIds.map(id => gameState.players[id]?.name).filter(Boolean);
+  const allUndercoverElim = gameState.undercoverIds.every(id => !gameState.players[id]?.alive);
+  document.getElementById('gameover-title').textContent = allUndercoverElim ? 'Civilians win!' : 'Undercovers win!';
+  document.getElementById('gameover-subtitle').textContent = allUndercoverElim
+    ? 'All undercovers were eliminated!'
+    : 'The undercovers survived to the end!';
+  const list = document.getElementById('undercover-reveal-list');
+  list.innerHTML = gameState.undercoverIds.map(id => {
+    const p = gameState.players[id];
+    if (!p) return '';
+    return `
+      <div class="player-row">
+        <div class="avatar" style="background:${p.color}22;color:${p.color};width:36px;height:36px;">${initials(p.name)}</div>
+        <span class="player-name">${p.name}</span>
+        <span class="badge badge-danger">Undercover</span>
+      </div>`;
+  }).join('');
+  const pair = gameState.wordPairs[gameState.currentPairIndex];
+  document.getElementById('reveal-civil-word').textContent = pair[0];
+  document.getElementById('reveal-under-word').textContent = pair[1];
+  if (isHost) document.getElementById('play-again-btn').style.display = 'block';
+}
+</script>
+</body>
+</html>
