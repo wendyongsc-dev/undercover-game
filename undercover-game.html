@@ -445,11 +445,13 @@ async function joinRoom(){
 
 function publishState(){
   if(!isHost)return;
-  channel.publish({name:'state',data:{state:gameState}});
+  channel.publish({name:'state',data:{state:gameState,senderId:myId}});
 }
 
 function handleMessage(msg){
   const{name,data}=msg;
+  // Ignore messages sent by self
+  if(data.senderId===myId) return;
   if(name==='join'&&isHost){
     const idx=Object.keys(gameState.players).length;
     gameState.players[data.playerId]={id:data.playerId,name:data.playerName,color:COLORS[idx%COLORS.length],alive:true};
@@ -477,16 +479,18 @@ function syncToPhase(prevPhase){
     else { assignMyWord(); showWordScreen(); }
   }
   if(phase==='discuss'){
-    if(isEliminated()){ showEliminatedScreen(); }
+    if(isHost){ refreshHostTable(); renderDiscussion(); showScreen('screen-discuss'); }
+    else if(isEliminated()){ showEliminatedScreen(); }
     else { renderDiscussion(); showScreen('screen-discuss'); }
   }
   if(phase==='vote'){
-    if(isEliminated()){ showEliminatedScreen(); }
-    else { renderVoteGrid(); showScreen('screen-vote'); if(isHost)updateVoteCount(); }
+    if(isHost){ renderVoteGrid(); showScreen('screen-vote'); updateVoteCount(); }
+    else if(isEliminated()){ showEliminatedScreen(); }
+    else { renderVoteGrid(); showScreen('screen-vote'); }
   }
   if(phase==='results'){
-    // If this player was just eliminated, show them the eliminated screen first
-    if(!isHost && isEliminated() && gameState.eliminated[gameState.eliminated.length-1]===myId){
+    if(isHost){ refreshHostTable(); renderResults(); showScreen('screen-results'); }
+    else if(isEliminated() && gameState.eliminated[gameState.eliminated.length-1]===myId){
       showEliminatedScreen();
     } else {
       renderResults(); showScreen('screen-results');
@@ -496,7 +500,7 @@ function syncToPhase(prevPhase){
 }
 
 // Host overview — sees all assignments
-function showHostOverview(){
+function refreshHostTable(){
   const pair=gameState.wordPairs[gameState.currentPairIndex];
   document.getElementById('host-round-label').textContent=gameState.round;
   document.getElementById('host-civil-word').textContent=pair[0];
@@ -505,18 +509,24 @@ function showHostOverview(){
   const players=Object.values(gameState.players);
   tbody.innerHTML=players.map(p=>{
     const isUnder=gameState.undercoverIds.includes(p.id);
+    const isOut=!p.alive;
     const word=isUnder?pair[1]:pair[0];
-    return `<tr class="${isUnder?'undercover-row':''}">
+    return `<tr class="${isUnder?'undercover-row':''}" style="${isOut?'opacity:0.45;':''}">
       <td>
         <div style="display:flex;align-items:center;gap:8px;">
           <div class="avatar" style="background:${p.color}22;color:${p.color};width:28px;height:28px;font-size:11px;">${initials(p.name)}</div>
-          <span style="font-weight:500;">${p.name}</span>
+          <span style="font-weight:500;${isOut?'text-decoration:line-through;':''}">${p.name}</span>
+          ${isOut?'<span class="badge badge-danger" style="font-size:10px;">out</span>':''}
         </div>
       </td>
       <td style="font-weight:600;color:${isUnder?'var(--danger)':'var(--accent)'};">${word}</td>
       <td><span class="badge ${isUnder?'badge-danger':'badge-accent'}">${isUnder?'Undercover':'Civilian'}</span></td>
     </tr>`;
   }).join('');
+}
+
+function showHostOverview(){
+  refreshHostTable();
   showScreen('screen-host-overview');
 }
 
