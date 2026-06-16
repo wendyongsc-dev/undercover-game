@@ -80,6 +80,10 @@
   .text-muted { color: var(--text-muted); font-size: 13px; }
   .pulse { animation: pulse 2s infinite; }
   @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.5} }
+  .eliminated-screen { text-align: center; padding: 40px 20px; }
+  .eliminated-icon { font-size: 56px; margin-bottom: 16px; }
+  .eliminated-title { font-size: 32px; font-weight: 800; color: var(--danger); margin-bottom: 8px; }
+  .eliminated-sub { font-size: 15px; color: var(--text-muted); line-height: 1.6; }
   .win-banner { text-align: center; padding: 24px; border-radius: var(--radius); }
   .win-banner.civilian { background: var(--success-dim); border: 1px solid rgba(67,233,123,0.3); }
   .win-banner.undercover { background: var(--danger-dim); border: 1px solid rgba(252,92,125,0.3); }
@@ -267,6 +271,23 @@
   </div>
 </div>
 
+<!-- SCREEN: Eliminated -->
+<div id="screen-eliminated" class="screen">
+  <div class="eliminated-screen">
+    <div class="eliminated-icon">💀</div>
+    <div class="eliminated-title">You've been eliminated!</div>
+    <p class="eliminated-sub">You were voted out this round.<br>You can still watch the game — but no more voting for you!</p>
+  </div>
+  <div class="card" style="background:var(--danger-dim);border-color:rgba(252,92,125,0.25);">
+    <div class="card-label" style="color:var(--danger);">Your word was</div>
+    <div style="font-size:28px;font-weight:800;color:var(--danger);text-align:center;padding:8px 0;" id="eliminated-my-word">—</div>
+  </div>
+  <div class="phase-banner phase-discuss">
+    <div class="phase-dot"></div>
+    <span class="pulse">Game is still ongoing — watch along!</span>
+  </div>
+</div>
+
 <!-- SCREEN: Results -->
 <div id="screen-results" class="screen">
   <div class="header">
@@ -446,6 +467,8 @@ function handleMessage(msg){
   if(name==='vote'){ renderVoteGrid(); }
 }
 
+function isEliminated(){ return gameState.eliminated.includes(myId); }
+
 function syncToPhase(prevPhase){
   const phase=gameState.phase;
   if(phase==='lobby'){ if(!isHost)renderLobbyGuest(); }
@@ -453,9 +476,22 @@ function syncToPhase(prevPhase){
     if(isHost){ showHostOverview(); }
     else { assignMyWord(); showWordScreen(); }
   }
-  if(phase==='discuss'){ renderDiscussion(); showScreen('screen-discuss'); }
-  if(phase==='vote'){ renderVoteGrid(); showScreen('screen-vote'); if(isHost)updateVoteCount(); }
-  if(phase==='results'){ renderResults(); showScreen('screen-results'); }
+  if(phase==='discuss'){
+    if(isEliminated()){ showEliminatedScreen(); }
+    else { renderDiscussion(); showScreen('screen-discuss'); }
+  }
+  if(phase==='vote'){
+    if(isEliminated()){ showEliminatedScreen(); }
+    else { renderVoteGrid(); showScreen('screen-vote'); if(isHost)updateVoteCount(); }
+  }
+  if(phase==='results'){
+    // If this player was just eliminated, show them the eliminated screen first
+    if(!isHost && isEliminated() && gameState.eliminated[gameState.eliminated.length-1]===myId){
+      showEliminatedScreen();
+    } else {
+      renderResults(); showScreen('screen-results');
+    }
+  }
   if(phase==='gameover'){ renderGameOver(); showScreen('screen-gameover'); }
 }
 
@@ -502,6 +538,11 @@ function showWordScreen(){
   document.getElementById('dw-shown').style.display='block';
   document.getElementById('dw-hidden').style.display='none';
   showScreen('screen-word');
+}
+
+function showEliminatedScreen(){
+  document.getElementById('eliminated-my-word').textContent=myWord||'—';
+  showScreen('screen-eliminated');
 }
 
 function hostGoDiscuss(){
