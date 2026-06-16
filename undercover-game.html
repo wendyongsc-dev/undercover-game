@@ -595,21 +595,10 @@ function hostRevealResults(){
 function hostNextRound(){
   gameState.round++;
   gameState.votes={};
-  // Keep same undercovers (only new round of discussion/voting, same game)
-  // New word pair
-  const prevIdx=gameState.currentPairIndex;
-  let newIdx=prevIdx;
-  if(gameState.wordPairs.length>1){
-    while(newIdx===prevIdx){ newIdx=Math.floor(Math.random()*gameState.wordPairs.length); }
-  }
-  gameState.currentPairIndex=newIdx;
-  // Reassign undercovers from still-alive players
-  const alive=Object.keys(gameState.players).filter(id=>gameState.players[id].alive);
-  const shuffled=[...alive].sort(()=>Math.random()-0.5);
-  gameState.undercoverIds=shuffled.slice(0,Math.min(gameState.numUndercovers,alive.length-2));
-  gameState.phase='word';
+  // Same word pair, same undercovers — just go back to discussion
+  gameState.phase='discuss';
   publishState();
-  if(isHost){ showHostOverview(); } else { assignMyWord(); showWordScreen(); }
+  if(isHost){ renderDiscussion(); showScreen('screen-discuss'); }
 }
 
 function hostEndGame(){
