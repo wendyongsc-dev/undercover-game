@@ -297,6 +297,10 @@
   <div class="card">
     <div id="results-list"></div>
   </div>
+  <div class="card" id="tie-card" style="display:none;background:var(--amber-dim);border-color:rgba(249,168,37,0.25);">
+    <div class="card-label" style="color:var(--amber);">It's a tie!</div>
+    <p style="font-size:14px;color:var(--amber);margin-bottom:8px;" id="tie-message"></p>
+  </div>
   <div class="card" id="eliminated-card" style="display:none;">
     <div class="card-label">Eliminated</div>
     <div style="display:flex;align-items:center;gap:12px;padding:8px 0;">
@@ -309,8 +313,12 @@
   </div>
   <div class="card" id="host-controls-results" style="display:none;">
     <div class="card-label">Host controls</div>
+    <div id="host-tie-controls" style="display:none;margin-bottom:10px;">
+      <button class="btn btn-secondary" style="margin-bottom:8px;" onclick="hostTieBreakVote()">Start tie-break vote</button>
+      <p class="text-muted" style="font-size:12px;">Tied players speak again, then everyone votes only between them.</p>
+    </div>
     <div class="flex-row">
-      <button class="btn btn-secondary" onclick="hostNextRound()">Next round</button>
+      <button class="btn btn-secondary" id="btn-next-round" onclick="hostNextRound()">Next round</button>
       <button class="btn btn-danger" onclick="hostEndGame()">End game &amp; reveal</button>
     </div>
   </div>
@@ -576,30 +584,61 @@ function hostStartVoting(){
 }
 
 function hostRevealResults(){
-  // Eliminate player with most votes
   const tally={};
   Object.values(gameState.votes).forEach(id=>{ tally[id]=(tally[id]||0)+1; });
   const sorted=Object.entries(tally).sort((a,b)=>b[1]-a[1]);
+  const topCount=sorted[0]?.[1]||0;
+  const tied=sorted.filter(([id,count])=>count===topCount).map(([id])=>id);
+
+  // Tie between 2+ players
+  if(tied.length>1){
+    // Second tie-break attempt already happened — no elimination this round
+    if(gameState.tieBreak){
+      gameState.tieBreak=false;
+      gameState.tieIds=[];
+      gameState.phase='results';
+      gameState.lastResult='no-elim';
+      publishState(); renderResults(); showScreen('screen-results'); return;
+    }
+    // First tie — flag it, show results with tie banner
+    gameState.tieBreak=true;
+    gameState.tieIds=tied;
+    gameState.phase='results';
+    gameState.lastResult='tie';
+    publishState(); renderResults(); showScreen('screen-results'); return;
+  }
+
+  // Clear tie state
+  gameState.tieBreak=false; gameState.tieIds=[];
+
+  // Eliminate top-voted player
   const eliminatedId=sorted[0]?.[0];
   if(eliminatedId&&gameState.players[eliminatedId]){
     gameState.players[eliminatedId].alive=false;
     gameState.eliminated.push(eliminatedId);
   }
+  gameState.lastResult='eliminated';
+
   // Check win conditions
   const aliveIds=Object.keys(gameState.players).filter(id=>gameState.players[id].alive);
   const aliveUndercovers=gameState.undercoverIds.filter(id=>gameState.players[id]?.alive);
-  // Civilians win: all undercovers eliminated
   if(aliveUndercovers.length===0){
     gameState.phase='gameover'; gameState.winner='civilian';
     publishState(); renderGameOver(); showScreen('screen-gameover'); return;
   }
-  // Undercovers win: alive players <= undercovers + 1
   if(aliveIds.length<=aliveUndercovers.length+1){
     gameState.phase='gameover'; gameState.winner='undercover';
     publishState(); renderGameOver(); showScreen('screen-gameover'); return;
   }
   gameState.phase='results';
   publishState(); renderResults(); showScreen('screen-results');
+}
+
+function hostTieBreakVote(){
+  // Only tied players can be voted for — store tieIds, go to vote phase
+  gameState.votes={};
+  gameState.phase='vote';
+  publishState(); renderVoteGrid(); showScreen('screen-vote'); updateVoteCount();
 }
 
 function hostNextRound(){
@@ -664,7 +703,10 @@ function renderDiscussion(){
 }
 
 function renderVoteGrid(){
-  const players=Object.values(gameState.players).filter(p=>p.alive&&(isHost||p.id!==myId));
+  const tieIds=gameState.tieIds||[];
+  const isTieBreak=gameState.tieBreak&&tieIds.length>0;
+  let players=Object.values(gameState.players).filter(p=>p.alive&&(isHost||p.id!==myId));
+  if(isTieBreak) players=players.filter(p=>tieIds.includes(p.id));
   const myVote=gameState.votes[myId];
   document.getElementById('vote-round').textContent=gameState.round;
   if(isHost){
@@ -714,29 +756,61 @@ function renderResults(){
   Object.values(gameState.votes).forEach(id=>{ tally[id]=(tally[id]||0)+1; });
   const sorted=Object.entries(tally).sort((a,b)=>b[1]-a[1]);
   const total=Object.values(tally).reduce((a,b)=>a+b,0)||1;
-  // Find eliminated (already marked by host)
-  const eliminatedId=gameState.eliminated[gameState.eliminated.length-1];
-  const eliminated=eliminatedId?gameState.players[eliminatedId]:null;
+  const lastResult=gameState.lastResult;
+  const tiedNames=(gameState.tieIds||[]).map(id=>gameState.players[id]?.name).filter(Boolean);
+
   document.getElementById('round-label').textContent=gameState.round;
   document.getElementById('results-list').innerHTML=sorted.map(([id,count])=>{
     const p=gameState.players[id]; if(!p)return'';
     const pct=Math.round((count/total)*100);
+    const isTied=(gameState.tieIds||[]).includes(id)&&lastResult==='tie';
     return `<div class="result-row">
       <div class="avatar" style="background:${p.color}22;color:${p.color};width:32px;height:32px;font-size:12px;">${initials(p.name)}</div>
       <span style="width:90px;font-size:14px;">${p.name}</span>
-      <div class="vote-bar-wrap"><div class="vote-bar" style="width:${pct}%;"></div></div>
+      <div class="vote-bar-wrap"><div class="vote-bar" style="width:${pct}%;${isTied?'background:var(--amber);':''}"></div></div>
       <span style="font-size:14px;font-weight:600;min-width:24px;text-align:right;">${count}</span>
+      ${isTied?'<span class="badge badge-amber">tied</span>':''}
     </div>`;
   }).join('');
+
+  // Tie banner
+  const tieCard=document.getElementById('tie-card');
+  if(lastResult==='tie'){
+    tieCard.style.display='block';
+    document.getElementById('tie-message').textContent=
+      tiedNames.join(' & ')+' are tied! They will each speak again, then everyone votes only between them.';
+  } else if(lastResult==='no-elim'){
+    tieCard.style.display='block';
+    document.getElementById('tie-message').textContent='Tied again — no one is eliminated this round. Game continues!';
+  } else {
+    tieCard.style.display='none';
+  }
+
+  // Eliminated banner (only if someone was eliminated)
   const card=document.getElementById('eliminated-card');
-  if(eliminated){
-    card.style.display='block';
-    const av=document.getElementById('eliminated-avatar');
-    av.textContent=initials(eliminated.name);
-    av.style.background=eliminated.color+'22'; av.style.color=eliminated.color;
-    document.getElementById('eliminated-name').textContent=eliminated.name+' is eliminated!';
+  if(lastResult==='eliminated'){
+    const eliminatedId=gameState.eliminated[gameState.eliminated.length-1];
+    const eliminated=eliminatedId?gameState.players[eliminatedId]:null;
+    if(eliminated){
+      card.style.display='block';
+      card.innerHTML=`<div class="card-label">Eliminated</div>
+        <div style="display:flex;align-items:center;gap:12px;padding:8px 0;">
+          <div class="avatar" style="background:${eliminated.color}22;color:${eliminated.color};width:44px;height:44px;font-size:16px;">${initials(eliminated.name)}</div>
+          <div>
+            <div style="font-size:18px;font-weight:700;">${eliminated.name} is eliminated!</div>
+            <div style="font-size:13px;color:var(--text-muted);margin-top:4px;">Identity will be revealed at the end of the game.</div>
+          </div>
+        </div>`;
+    } else { card.style.display='none'; }
   } else { card.style.display='none'; }
-  document.getElementById('host-controls-results').style.display=isHost?'block':'none';
+
+  if(isHost){
+    document.getElementById('host-controls-results').style.display='block';
+    document.getElementById('host-tie-controls').style.display=lastResult==='tie'?'block':'none';
+    document.getElementById('btn-next-round').style.display=lastResult==='tie'?'none':'block';
+  } else {
+    document.getElementById('host-controls-results').style.display='none';
+  }
   document.getElementById('guest-results-waiting').style.display=isHost?'none':'block';
 }
 
