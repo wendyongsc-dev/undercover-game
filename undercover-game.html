@@ -171,7 +171,7 @@
 <div id="screen-host-overview" class="screen">
   <div class="header">
     <div class="logo">Host dashboard</div>
-    <h1>Round <span id="host-round-label">1</span></h1>
+    <h1>Round <span id="host-round-label">1</span> of 3</h1>
     <p class="subtitle">Only you can see this</p>
   </div>
   <div class="card">
@@ -228,7 +228,7 @@
 <!-- SCREEN: Discussion -->
 <div id="screen-discuss" class="screen">
   <div class="header">
-    <div class="logo">Discussion phase · Round <span id="discuss-round">1</span></div>
+    <div class="logo">Discussion phase · Round <span id="discuss-round">1</span> of 3</div>
     <h1>Describe your word</h1>
   </div>
   <div class="phase-banner phase-discuss">
@@ -253,12 +253,12 @@
 <!-- SCREEN: Voting -->
 <div id="screen-vote" class="screen">
   <div class="header">
-    <div class="logo">Voting phase · Round <span id="vote-round">1</span></div>
+    <div class="logo">Voting phase · Round <span id="vote-round">1</span> of 3</div>
     <h1>Who is undercover?</h1>
   </div>
   <div class="phase-banner phase-vote">
     <div class="phase-dot"></div>
-    <span>Vote once. Votes are visible to everyone.</span>
+    <span>Vote once for who you suspect. The top 2 most-voted players are eliminated.</span>
   </div>
   <div class="card">
     <div class="card-label">Cast your vote</div>
@@ -291,32 +291,23 @@
 <!-- SCREEN: Results -->
 <div id="screen-results" class="screen">
   <div class="header">
-    <div class="logo">Round <span id="round-label">1</span> results</div>
+    <div class="logo">Round <span id="round-label">1</span> of 3 — results</div>
     <h1>Vote tally</h1>
   </div>
   <div class="card">
     <div id="results-list"></div>
   </div>
   <div class="card" id="tie-card" style="display:none;background:var(--amber-dim);border-color:rgba(249,168,37,0.25);">
-    <div class="card-label" style="color:var(--amber);">It's a tie!</div>
-    <p style="font-size:14px;color:var(--amber);margin-bottom:8px;" id="tie-message"></p>
+    <div class="card-label" style="color:var(--amber);">Tied for 2nd elimination slot</div>
+    <p style="font-size:14px;color:var(--amber);margin-bottom:0;" id="tie-message"></p>
   </div>
   <div class="card" id="eliminated-card" style="display:none;">
-    <div class="card-label">Eliminated</div>
-    <div style="display:flex;align-items:center;gap:12px;padding:8px 0;">
-      <div class="avatar" id="eliminated-avatar" style="width:44px;height:44px;font-size:16px;"></div>
-      <div>
-        <div style="font-size:18px;font-weight:700;" id="eliminated-name"></div>
-        <div style="font-size:13px;color:var(--text-muted);margin-top:4px;">Identity will be revealed at the end of the game.</div>
-      </div>
-    </div>
+    <div class="card-label">Eliminated this round</div>
+    <div id="eliminated-list" style="display:flex;flex-direction:column;gap:10px;"></div>
+    <div style="font-size:13px;color:var(--text-muted);margin-top:10px;">Identities will be revealed at the end of the game.</div>
   </div>
   <div class="card" id="host-controls-results" style="display:none;">
     <div class="card-label">Host controls</div>
-    <div id="host-tie-controls" style="display:none;margin-bottom:10px;">
-      <button class="btn btn-secondary" style="margin-bottom:8px;" onclick="hostTieBreakVote()">Start tie-break vote</button>
-      <p class="text-muted" style="font-size:12px;">Tied players speak again, then everyone votes only between them.</p>
-    </div>
     <div class="flex-row">
       <button class="btn btn-secondary" id="btn-next-round" onclick="hostNextRound()">Next round</button>
       <button class="btn btn-danger" onclick="hostEndGame()">End game &amp; reveal</button>
@@ -583,65 +574,57 @@ function hostStartVoting(){
   publishState(); renderVoteGrid(); showScreen('screen-vote'); updateVoteCount();
 }
 
+const MAX_ROUNDS = 3;
+const ELIMINATE_PER_ROUND = 2;
+
 function hostRevealResults(){
   const tally={};
   Object.values(gameState.votes).forEach(id=>{ tally[id]=(tally[id]||0)+1; });
   const sorted=Object.entries(tally).sort((a,b)=>b[1]-a[1]);
-  const topCount=sorted[0]?.[1]||0;
-  const tied=sorted.filter(([id,count])=>count===topCount).map(([id])=>id);
 
-  // Tie between 2+ players
-  if(tied.length>1){
-    // Second tie-break attempt already happened — no elimination this round
-    if(gameState.tieBreak){
-      gameState.tieBreak=false;
-      gameState.tieIds=[];
-      gameState.phase='results';
-      gameState.lastResult='no-elim';
-      publishState(); renderResults(); showScreen('screen-results'); return;
+  // Determine who gets eliminated this round (top N by votes)
+  let eliminatedIds=[];
+  if(sorted.length>0){
+    const cut2Count = sorted[1]?.[1] ?? -1; // vote count at position #2 (0-indexed: index 1)
+    const cut3Count = sorted[2]?.[1] ?? -1; // vote count at position #3
+    if(cut2Count===cut3Count && cut2Count!==-1){
+      // Tie for the 2nd elimination slot — only eliminate the clear #1
+      eliminatedIds=[sorted[0][0]];
+      gameState.lastResult='eliminated-tie';
+    } else {
+      eliminatedIds=sorted.slice(0,ELIMINATE_PER_ROUND).map(([id])=>id);
+      gameState.lastResult='eliminated';
     }
-    // First tie — flag it, show results with tie banner
-    gameState.tieBreak=true;
-    gameState.tieIds=tied;
-    gameState.phase='results';
-    gameState.lastResult='tie';
-    publishState(); renderResults(); showScreen('screen-results'); return;
   }
 
-  // Clear tie state
-  gameState.tieBreak=false; gameState.tieIds=[];
-
-  // Eliminate top-voted player
-  const eliminatedId=sorted[0]?.[0];
-  if(eliminatedId&&gameState.players[eliminatedId]){
-    gameState.players[eliminatedId].alive=false;
-    gameState.eliminated.push(eliminatedId);
-  }
-  gameState.lastResult='eliminated';
+  eliminatedIds.forEach(id=>{
+    if(gameState.players[id]){
+      gameState.players[id].alive=false;
+      gameState.eliminated.push(id);
+    }
+  });
+  gameState.lastEliminatedIds=eliminatedIds;
 
   // Check win conditions
   const aliveIds=Object.keys(gameState.players).filter(id=>gameState.players[id].alive);
   const aliveUndercovers=gameState.undercoverIds.filter(id=>gameState.players[id]?.alive);
+
   if(aliveUndercovers.length===0){
     gameState.phase='gameover'; gameState.winner='civilian';
     publishState(); renderGameOver(); showScreen('screen-gameover'); return;
   }
-  if(aliveIds.length<=aliveUndercovers.length+1){
-    gameState.phase='gameover'; gameState.winner='undercover';
+  if(gameState.round>=MAX_ROUNDS){
+    // Round cap reached — decide by rule: civilians win only if all undercovers eliminated by now
+    gameState.phase='gameover';
+    gameState.winner = aliveUndercovers.length===0 ? 'civilian' : 'undercover';
     publishState(); renderGameOver(); showScreen('screen-gameover'); return;
   }
   gameState.phase='results';
   publishState(); renderResults(); showScreen('screen-results');
 }
 
-function hostTieBreakVote(){
-  // Only tied players can be voted for — store tieIds, go to vote phase
-  gameState.votes={};
-  gameState.phase='vote';
-  publishState(); renderVoteGrid(); showScreen('screen-vote'); updateVoteCount();
-}
-
 function hostNextRound(){
+  if(gameState.round>=MAX_ROUNDS){ showToast('Round limit reached'); return; }
   gameState.round++;
   gameState.votes={};
   // Same word pair, same undercovers — just go back to discussion
@@ -652,7 +635,6 @@ function hostNextRound(){
 
 function hostEndGame(){
   gameState.phase='gameover';
-  // Determine winner based on current state
   const aliveUndercovers=gameState.undercoverIds.filter(id=>gameState.players[id]?.alive);
   gameState.winner=aliveUndercovers.length===0?'civilian':'undercover';
   publishState(); renderGameOver(); showScreen('screen-gameover');
@@ -703,10 +685,7 @@ function renderDiscussion(){
 }
 
 function renderVoteGrid(){
-  const tieIds=gameState.tieIds||[];
-  const isTieBreak=gameState.tieBreak&&tieIds.length>0;
   let players=Object.values(gameState.players).filter(p=>p.alive&&(isHost||p.id!==myId));
-  if(isTieBreak) players=players.filter(p=>tieIds.includes(p.id));
   const myVote=gameState.votes[myId];
   document.getElementById('vote-round').textContent=gameState.round;
   if(isHost){
@@ -757,57 +736,51 @@ function renderResults(){
   const sorted=Object.entries(tally).sort((a,b)=>b[1]-a[1]);
   const total=Object.values(tally).reduce((a,b)=>a+b,0)||1;
   const lastResult=gameState.lastResult;
-  const tiedNames=(gameState.tieIds||[]).map(id=>gameState.players[id]?.name).filter(Boolean);
+  const eliminatedIds=gameState.lastEliminatedIds||[];
 
   document.getElementById('round-label').textContent=gameState.round;
   document.getElementById('results-list').innerHTML=sorted.map(([id,count])=>{
     const p=gameState.players[id]; if(!p)return'';
     const pct=Math.round((count/total)*100);
-    const isTied=(gameState.tieIds||[]).includes(id)&&lastResult==='tie';
+    const isOut=eliminatedIds.includes(id);
     return `<div class="result-row">
       <div class="avatar" style="background:${p.color}22;color:${p.color};width:32px;height:32px;font-size:12px;">${initials(p.name)}</div>
       <span style="width:90px;font-size:14px;">${p.name}</span>
-      <div class="vote-bar-wrap"><div class="vote-bar" style="width:${pct}%;${isTied?'background:var(--amber);':''}"></div></div>
+      <div class="vote-bar-wrap"><div class="vote-bar" style="width:${pct}%;${isOut?'background:var(--danger);':''}"></div></div>
       <span style="font-size:14px;font-weight:600;min-width:24px;text-align:right;">${count}</span>
-      ${isTied?'<span class="badge badge-amber">tied</span>':''}
+      ${isOut?'<span class="badge badge-danger">out</span>':''}
     </div>`;
   }).join('');
 
-  // Tie banner
+  // Tie-for-2nd-slot notice (only 1 person eliminated this round instead of 2)
   const tieCard=document.getElementById('tie-card');
-  if(lastResult==='tie'){
+  if(lastResult==='eliminated-tie'){
     tieCard.style.display='block';
     document.getElementById('tie-message').textContent=
-      tiedNames.join(' & ')+' are tied! They will each speak again, then everyone votes only between them.';
-  } else if(lastResult==='no-elim'){
-    tieCard.style.display='block';
-    document.getElementById('tie-message').textContent='Tied again — no one is eliminated this round. Game continues!';
+      'There was a tie for the 2nd elimination spot, so only the top-voted player is eliminated this round.';
   } else {
     tieCard.style.display='none';
   }
 
-  // Eliminated banner (only if someone was eliminated)
+  // Eliminated list
   const card=document.getElementById('eliminated-card');
-  if(lastResult==='eliminated'){
-    const eliminatedId=gameState.eliminated[gameState.eliminated.length-1];
-    const eliminated=eliminatedId?gameState.players[eliminatedId]:null;
-    if(eliminated){
-      card.style.display='block';
-      card.innerHTML=`<div class="card-label">Eliminated</div>
-        <div style="display:flex;align-items:center;gap:12px;padding:8px 0;">
-          <div class="avatar" style="background:${eliminated.color}22;color:${eliminated.color};width:44px;height:44px;font-size:16px;">${initials(eliminated.name)}</div>
-          <div>
-            <div style="font-size:18px;font-weight:700;">${eliminated.name} is eliminated!</div>
-            <div style="font-size:13px;color:var(--text-muted);margin-top:4px;">Identity will be revealed at the end of the game.</div>
-          </div>
-        </div>`;
-    } else { card.style.display='none'; }
-  } else { card.style.display='none'; }
+  if(eliminatedIds.length>0){
+    card.style.display='block';
+    document.getElementById('eliminated-list').innerHTML=eliminatedIds.map(id=>{
+      const p=gameState.players[id]; if(!p)return'';
+      return `<div style="display:flex;align-items:center;gap:12px;">
+        <div class="avatar" style="background:${p.color}22;color:${p.color};width:40px;height:40px;font-size:14px;">${initials(p.name)}</div>
+        <div style="font-size:16px;font-weight:700;">${p.name} is eliminated!</div>
+      </div>`;
+    }).join('');
+  } else {
+    card.style.display='none';
+  }
 
+  const atCap = gameState.round>=MAX_ROUNDS;
   if(isHost){
     document.getElementById('host-controls-results').style.display='block';
-    document.getElementById('host-tie-controls').style.display=lastResult==='tie'?'block':'none';
-    document.getElementById('btn-next-round').style.display=lastResult==='tie'?'none':'block';
+    document.getElementById('btn-next-round').style.display=atCap?'none':'block';
   } else {
     document.getElementById('host-controls-results').style.display='none';
   }
@@ -820,8 +793,8 @@ function renderGameOver(){
   banner.className='win-banner '+(winner==='civilian'?'civilian':'undercover');
   document.getElementById('gameover-title').textContent=winner==='civilian'?'Civilians win!':'Undercovers win!';
   document.getElementById('gameover-subtitle').textContent=winner==='civilian'
-    ?'All undercovers were found and eliminated!'
-    :'The undercovers outnumbered the civilians!';
+    ?'All 3 undercovers were eliminated by the end of round 3!'
+    :'At least 1 undercover survived after round 3!';
   document.getElementById('undercover-reveal-list').innerHTML=gameState.undercoverIds.map(id=>{
     const p=gameState.players[id]; if(!p)return'';
     const alive=p.alive;
