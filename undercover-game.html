@@ -258,11 +258,13 @@
   </div>
   <div class="phase-banner phase-vote">
     <div class="phase-dot"></div>
-    <span>Vote once for who you suspect. The top 2 most-voted players are eliminated.</span>
+    <span>Pick 2 players you suspect. The top 2 most-voted are eliminated.</span>
   </div>
   <div class="card">
-    <div class="card-label">Cast your vote</div>
+    <div class="card-label">Cast your votes</div>
     <div class="vote-grid" id="vote-grid"></div>
+    <button class="btn btn-primary" id="vote-submit-btn" style="margin-top:14px;" onclick="submitVotes()" disabled>Submit votes (0/2 selected)</button>
+    <p class="text-muted text-center" id="vote-hint" style="margin-top:8px;">Pick 2 players you suspect, then submit.</p>
   </div>
   <div class="card" id="host-controls-vote" style="display:none;">
     <div class="card-label">Host controls</div>
@@ -462,7 +464,9 @@ function handleMessage(msg){
     syncToPhase(prev);
   }
   if(name==='vote'&&isHost){
-    gameState.votes[data.voterId]=data.targetId;
+    gameState.votes[data.voterId]=data.targets;
+    if(!gameState.votesSubmitted) gameState.votesSubmitted={};
+    gameState.votesSubmitted[data.voterId]=true;
     publishState(); updateVoteCount();
   }
   if(name==='vote'){ renderVoteGrid(); }
@@ -570,16 +574,19 @@ function hostStartGame(){
 }
 
 function hostStartVoting(){
-  gameState.votes={}; gameState.phase='vote';
+  gameState.votes={}; gameState.votesSubmitted={}; gameState.phase='vote';
   publishState(); renderVoteGrid(); showScreen('screen-vote'); updateVoteCount();
 }
 
 const MAX_ROUNDS = 3;
 const ELIMINATE_PER_ROUND = 2;
+const VOTES_PER_PLAYER = 2;
 
 function hostRevealResults(){
   const tally={};
-  Object.values(gameState.votes).forEach(id=>{ tally[id]=(tally[id]||0)+1; });
+  Object.values(gameState.votes).forEach(targets=>{
+    (targets||[]).forEach(id=>{ tally[id]=(tally[id]||0)+1; });
+  });
   const sorted=Object.entries(tally).sort((a,b)=>b[1]-a[1]);
 
   // Determine who gets eliminated this round (top N by votes)
@@ -686,12 +693,18 @@ function renderDiscussion(){
 
 function renderVoteGrid(){
   let players=Object.values(gameState.players).filter(p=>p.alive&&(isHost||p.id!==myId));
-  const myVote=gameState.votes[myId];
+  const myVotes=gameState.votes[myId]||[];
+  const submitted=!!gameState.votesSubmitted?.[myId];
   document.getElementById('vote-round').textContent=gameState.round;
+
+  function votesForPlayer(pid){
+    return Object.entries(gameState.votes).filter(([voterId,targets])=>(targets||[]).includes(pid));
+  }
+
   if(isHost){
     // Host sees votes but can't vote
     document.getElementById('vote-grid').innerHTML=players.map(p=>{
-      const votesFor=Object.entries(gameState.votes).filter(([k,v])=>v===p.id);
+      const votesFor=votesForPlayer(p.id);
       const chips=votesFor.map(([vid])=>{const v=gameState.players[vid];return`<span class="vote-chip">${v?v.name:'?'}</span>`;}).join('');
       return `<div class="vote-btn" style="cursor:default;">
         <div class="avatar" style="background:${p.color}22;color:${p.color};width:32px;height:32px;font-size:12px;">${initials(p.name)}</div>
@@ -703,29 +716,58 @@ function renderVoteGrid(){
     updateVoteCount();
   } else {
     document.getElementById('vote-grid').innerHTML=players.map(p=>{
-      const votesFor=Object.entries(gameState.votes).filter(([k,v])=>v===p.id);
+      const votesFor=votesForPlayer(p.id);
       const chips=votesFor.map(([vid])=>{const v=gameState.players[vid];const isSelf=vid===myId;return`<span class="vote-chip${isSelf?' self':''}">${v?v.name:'?'}</span>`;}).join('');
-      const sel=myVote===p.id?'voted-for':'';
-      return `<button class="vote-btn ${sel}" onclick="castVote('${p.id}')" ${myVote?'disabled':''}>
+      const sel=myVotes.includes(p.id)?'voted-for':'';
+      const disableUnselected=submitted||(myVotes.length>=VOTES_PER_PLAYER && !myVotes.includes(p.id));
+      return `<button class="vote-btn ${sel}" onclick="toggleVote('${p.id}')" ${disableUnselected?'disabled':''}>
         <div class="avatar" style="background:${p.color}22;color:${p.color};width:32px;height:32px;font-size:12px;">${initials(p.name)}</div>
         <span>${p.name}</span>
         <div class="vote-count">${chips}</div>
       </button>`;
     }).join('');
     document.getElementById('host-controls-vote').style.display='none';
+
+    const submitBtn=document.getElementById('vote-submit-btn');
+    const voteHint=document.getElementById('vote-hint');
+    if(submitBtn){
+      if(submitted){
+        submitBtn.textContent='Votes submitted ✓';
+        submitBtn.disabled=true;
+        voteHint.textContent='Waiting for everyone else to vote...';
+      } else {
+        submitBtn.textContent=`Submit votes (${myVotes.length}/${VOTES_PER_PLAYER} selected)`;
+        submitBtn.disabled=myVotes.length!==VOTES_PER_PLAYER;
+        voteHint.textContent=`Pick ${VOTES_PER_PLAYER} players you suspect, then submit.`;
+      }
+    }
   }
 }
 
-function castVote(targetId){
-  if(gameState.votes[myId])return;
-  gameState.votes[myId]=targetId;
-  publish('vote',{voterId:myId,targetId});
-  renderVoteGrid(); showToast('Vote cast!');
+function toggleVote(targetId){
+  if(gameState.votesSubmitted?.[myId])return;
+  let myVotes=gameState.votes[myId]||[];
+  if(myVotes.includes(targetId)){
+    myVotes=myVotes.filter(id=>id!==targetId);
+  } else if(myVotes.length<VOTES_PER_PLAYER){
+    myVotes=[...myVotes,targetId];
+  }
+  gameState.votes[myId]=myVotes;
+  renderVoteGrid();
+}
+
+function submitVotes(){
+  const myVotes=gameState.votes[myId]||[];
+  if(myVotes.length!==VOTES_PER_PLAYER){ showToast(`Pick exactly ${VOTES_PER_PLAYER} players`); return; }
+  if(!gameState.votesSubmitted) gameState.votesSubmitted={};
+  gameState.votesSubmitted[myId]=true;
+  publish('vote',{voterId:myId,targets:myVotes});
+  renderVoteGrid(); showToast('Votes submitted!');
 }
 
 function updateVoteCount(){
   const alive=Object.values(gameState.players).filter(p=>p.alive).length;
-  const cast=Object.keys(gameState.votes).length;
+  const cast=Object.keys(gameState.votesSubmitted||{}).length;
   document.getElementById('votes-cast').textContent=cast;
   document.getElementById('votes-total').textContent=alive;
 }
